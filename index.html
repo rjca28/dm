@@ -67,6 +67,17 @@ tfoot td{font-weight:700;background:var(--soft);border-bottom:0}
 .grid td.n{padding:6px 10px}
 .cell{width:86px;border:0;border-radius:0;background:transparent;text-align:right;font:13px var(--mono);padding:8px 8px}
 .cell:focus{background:var(--soft);outline:2px solid var(--accent);outline-offset:-2px}
+.people{display:flex;gap:4px;flex-wrap:wrap;background:var(--soft);padding:3px;border-radius:8px}
+.people button{border:0;background:none;padding:6px 12px;font-size:14px;display:flex;align-items:center;gap:7px;border-radius:6px}
+.people button[aria-pressed="true"]{background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.dot{display:inline-block;flex:none;width:9px;height:9px;border-radius:50%}
+.who{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+.settle{border:1px solid var(--line);border-radius:var(--r);padding:18px;display:grid;gap:6px;background:var(--surface)}
+.settle .big{font:600 30px var(--mono);font-variant-numeric:tabular-nums}
+.settle .line{font-size:17px}
+@media (max-width:520px){.kpi .v{font-size:18px}.settle .big{font-size:26px}}
+.chips{display:flex;flex-wrap:wrap;gap:6px 14px}
+.chips label{display:flex;gap:6px;align-items:center;font-size:14px}
 .cell.has{box-shadow:inset 3px 0 0 var(--accent)}
 .cell.err{background:color-mix(in srgb,var(--bad) 18%,transparent)}
 .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:0}
@@ -100,6 +111,7 @@ details summary{cursor:pointer;font-weight:600}
   <div class="wrap">
     <div class="bar">
       <div class="brand"><h1>Despesas Mensais</h1><span id="savedInfo"></span></div>
+      <div class="people" id="people" role="group" aria-label="Pessoa"></div>
       <div class="year">
         <button class="ghost" data-act="ano-prev" aria-label="Ano anterior">◀</button>
         <select id="anoSel" aria-label="Ano"></select>
@@ -110,6 +122,7 @@ details summary{cursor:pointer;font-weight:600}
       <button role="tab" data-act="tab" data-tab="tabela">Registo e tabela</button>
       <button role="tab" data-act="tab" data-tab="analise">Análise do ano</button>
       <button role="tab" data-act="tab" data-tab="comparar">Comparar anos</button>
+      <button role="tab" data-act="tab" data-tab="acerto">Acerto entre pessoas</button>
       <button role="tab" data-act="tab" data-tab="exportar">Exportar e backup</button>
     </nav>
   </div>
@@ -137,25 +150,37 @@ const r2=v=>Math.round(v*100)/100;
 let S=null;
 let ui={tab:'tabela',ano:HOJE.getFullYear(),cmpA:null,cmpB:null,homologo:true,
   exp:{ambito:'anual',mes:HOJE.getMonth(),conteudo:'global',cat:null,formato:'xlsx',lanc:true},
-  lf:{mes:'',cat:'',q:''}};
+  lf:{mes:'',cat:'',q:''},
+  ac:{a:'p1',b:'p2',periodo:'ano',mes:HOJE.getMonth(),excl:[],formato:'xlsx'}};
 let editId=null;
 
 /* ---------- dados ---------- */
 function uid(){return 'c'+Math.random().toString(36).slice(2,9)}
-function anos(){return Object.keys(S.anos).map(Number).sort((a,b)=>a-b)}
+/* DB = {versao:3, ativa, pessoas:[{id,nome,cor,dados}]}; S = dados da pessoa ativa */
+let DB=null;
+const COR_P=['#2f6f9f','#c0703a','#4f8a5b','#8a5aa6'];
+const pessoaAtiva=()=>DB.pessoas.find(p=>p.id===DB.ativa)||DB.pessoas[0];
+const pessoa=id=>DB.pessoas.find(p=>p.id===id);
+function usar(id){DB.ativa=id;S=pessoaAtiva().dados;S.lanc=S.lanc||[];editId=null;ui.lf.cat=''}
+function anos(D=S){return Object.keys(D.anos).map(Number).sort((a,b)=>a-b)}
+function anosTodos(){return [...new Set(DB.pessoas.flatMap(p=>anos(p.dados)))].sort((a,b)=>a-b)}
 /* valor de uma célula = valor base (escrito na grelha) + soma dos lançamentos desse mês/categoria */
-let IDX={},IDXN={};
-function reindex(){IDX={};IDXN={};S.lanc=S.lanc||[];S.lanc.forEach(l=>{const[a,mm]=l.data.split('-');const k=+a+'|'+l.cat+'|'+(+mm-1);IDX[k]=r2((IDX[k]||0)+l.valor);IDXN[k]=(IDXN[k]||0)+1;if(!S.anos[+a])S.anos[+a]={}})}
-function lancSum(y,cid,m){return IDX[y+'|'+cid+'|'+m]||0}
-function lancN(y,cid,m){return IDXN[y+'|'+cid+'|'+m]||0}
-function base(y,cid,m){return ((S.anos[y]||{})[cid]||[])[m]||0}
-function val(y,cid,m){return r2(base(y,cid,m)+lancSum(y,cid,m))}
+const IDXC=new WeakMap();
+function idx(D){let o=IDXC.get(D);if(!o){o={s:{},n:{}};(D.lanc||[]).forEach(l=>{const[a,mm]=l.data.split('-');const k=+a+'|'+l.cat+'|'+(+mm-1);o.s[k]=r2((o.s[k]||0)+l.valor);o.n[k]=(o.n[k]||0)+1;if(!D.anos[+a])D.anos[+a]={}});IDXC.set(D,o)}return o}
+function reindex(D=S){D.lanc=D.lanc||[];IDXC.delete(D);idx(D)}
+function lancSum(y,cid,m,D=S){return idx(D).s[y+'|'+cid+'|'+m]||0}
+function lancN(y,cid,m,D=S){return idx(D).n[y+'|'+cid+'|'+m]||0}
+function base(y,cid,m,D=S){return ((D.anos[y]||{})[cid]||[])[m]||0}
+function val(y,cid,m,D=S){return r2(base(y,cid,m,D)+lancSum(y,cid,m,D))}
 function setVal(y,cid,m,v){S.anos[y]=S.anos[y]||{};const a=S.anos[y][cid]=S.anos[y][cid]||Array(12).fill(0);a[m]=v}
 const fmtData=d=>d.split('-').reverse().join('/');
 const anoDe=d=>+d.slice(0,4), mesDe=d=>+d.slice(5,7)-1;
-function totaisMes(y){return ALL.map(m=>r2(S.categorias.reduce((s,c)=>s+val(y,c.id,m),0)))}
-function totalCat(y,cid,meses){return r2((meses||ALL).reduce((s,m)=>s+val(y,cid,m),0))}
-function mesesReg(y){return totaisMes(y).map((v,i)=>v>0?i:-1).filter(i=>i>=0)}
+function totaisMes(y,D=S){return ALL.map(m=>r2(D.categorias.reduce((s,c)=>s+val(y,c.id,m,D),0)))}
+function totalCat(y,cid,meses,D=S){return r2((meses||ALL).reduce((s,m)=>s+val(y,cid,m,D),0))}
+function mesesReg(y,D=S){return totaisMes(y,D).map((v,i)=>v>0?i:-1).filter(i=>i>=0)}
+/* total de uma pessoa num mês, só para as categorias (por nome) incluídas no acerto */
+function totalMesNomes(D,y,m,nomes){return r2(D.categorias.filter(c=>nomes.has(normNome(c.nome))).reduce((s,c)=>s+val(y,c.id,m,D),0))}
+const normNome=s=>s.trim().toLowerCase();
 function catNome(id){const c=S.categorias.find(c=>c.id===id);return c?c.nome:'—'}
 
 function parseNum(s){
@@ -175,16 +200,18 @@ function delta(a,b){ // b relativamente a a
   return {d,pc,cls,txt:sig+eur.format(Math.abs(d)),ptxt:pc===null?'—':(pc>0?'+':pc<0?'−':'')+p1.format(Math.abs(pc))+'%'};
 }
 
-function exemplo(){
-  let s=20240917;const rnd=()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
-  const cats=['Habitação','Alimentação','Transportes','Energia e água','Comunicações','Saúde','Educação','Lazer','Seguros','Outros']
-    .map((n,i)=>({id:uid(),nome:n,cor:PALETA[i]}));
+const CATS_BASE=['Habitação','Alimentação','Transportes','Energia e água','Comunicações','Saúde','Educação','Lazer','Seguros','Outros'];
+function catsBase(){return CATS_BASE.map((n,i)=>({id:uid(),nome:n,cor:PALETA[i]}))}
+function copiaCats(cats){return cats.map(c=>({...c}))}
+function exemplo(seed,f,cats){
+  let s=seed;const rnd=()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+  cats=cats||catsBase();
   const d={};
-  const gen=(ano,ate,f)=>{
+  const gen=(ano,ate,k)=>{
     d[ano]={};
     cats.forEach(c=>d[ano][c.id]=Array(12).fill(0));
     for(let m=0;m<=ate;m++){
-      const put=(i,v)=>d[ano][cats[i].id][m]=r2(Math.max(0,v*f));
+      const put=(i,v)=>d[ano][cats[i].id][m]=r2(Math.max(0,v*k*(f[i]??1)));
       put(0,650); put(1,360+rnd()*90); put(2,120+rnd()*60+(m===7?220:0));
       put(3,m<3||m>9?130+rnd()*25:80+rnd()*20); put(4,44.99);
       put(5,rnd()<.5?25+rnd()*90:0); put(6,m===6||m===7?0:m===8?310:115);
@@ -197,27 +224,39 @@ function exemplo(){
   const mm=String(ult+1).padStart(2,'0'), lanc=[];
   [[3,'Continente',1,82.40],[8,'Pingo Doce',1,46.15],[12,'Mercado municipal',1,23.80],[18,'Continente',1,91.32],
    [5,'Combustível',2,64.10],[20,'Portagens',2,18.45],[10,'Farmácia',5,21.90],[26,'Jantar fora',7,58.00],[15,'Manuais escolares',6,96.50]]
-  .forEach(([dia,desc,ci,v])=>{const cid=cats[ci].id;lanc.push({id:uid(),data:`${y}-${mm}-${String(dia).padStart(2,'0')}`,cat:cid,desc,valor:v});
-    d[y][cid][ult]=r2(Math.max(0,d[y][cid][ult]-v))});
+  .forEach(([dia,desc,ci,v])=>{if(!d[y][cats[ci].id][ult])return;const cid=cats[ci].id;const vv=r2(Math.min(v,d[y][cid][ult]));lanc.push({id:uid(),data:`${y}-${mm}-${String(dia).padStart(2,'0')}`,cat:cid,desc,valor:vv});
+    d[y][cid][ult]=r2(d[y][cid][ult]-vv)});
   return {versao:2,exemplo:true,categorias:cats,anos:d,lanc,atualizado:null};
 }
-function novoVazio(){
-  const cats=['Habitação','Alimentação','Transportes','Energia e água','Comunicações','Saúde','Educação','Lazer','Seguros','Outros']
-    .map((n,i)=>({id:uid(),nome:n,cor:PALETA[i]}));
-  return {versao:2,exemplo:false,categorias:cats,anos:{[HOJE.getFullYear()]:{}},lanc:[],atualizado:null};
+function novoVazio(cats){return {versao:2,exemplo:false,categorias:cats?copiaCats(cats):catsBase(),anos:{[HOJE.getFullYear()]:{}},lanc:[],atualizado:null}}
+function dbExemplo(){
+  const r=exemplo(20240917,[1,1,1,1,1,1,1,1,1,1]);
+  // Paula: mesmas categorias; paga menos habitação e mais educação/saúde
+  const p=exemplo(77123,[.55,.9,.7,1,1.2,1.6,1.4,.8,.6,1.1],copiaCats(r.categorias));
+  return {versao:3,ativa:'p1',pessoas:[{id:'p1',nome:'Ricardo Antunes',cor:COR_P[0],dados:r},{id:'p2',nome:'Paula Ribeiro',cor:COR_P[1],dados:p}]};
 }
+function dbVazio(){
+  const a=novoVazio();
+  return {versao:3,ativa:'p1',pessoas:[{id:'p1',nome:'Ricardo Antunes',cor:COR_P[0],dados:a},{id:'p2',nome:'Paula Ribeiro',cor:COR_P[1],dados:novoVazio(a.categorias)}]};
+}
+function dbValido(o){return o&&Array.isArray(o.pessoas)&&o.pessoas.length&&o.pessoas.every(p=>p&&p.id&&p.nome&&valido(p.dados))}
 function load(){
-  try{const t=localStorage.getItem(KEY);if(t){const o=JSON.parse(t);if(valido(o))S=o}}catch(e){}
-  if(!S) S=exemplo();
-  reindex();
-  try{const u=JSON.parse(localStorage.getItem(KEY_UI)||'null');if(u)ui={...ui,...u,exp:{...ui.exp,...(u.exp||{})}}}catch(e){}
-  if(!S.anos[ui.ano]){const a=anos();ui.ano=a.includes(HOJE.getFullYear())?HOJE.getFullYear():a[a.length-1]}
+  try{const t=localStorage.getItem(KEY);if(t){const o=JSON.parse(t);
+    if(dbValido(o)) DB=o;
+    else if(valido(o)){ // dados de uma versão anterior (uma só pessoa) passam a ser do Ricardo
+      DB={versao:3,ativa:'p1',pessoas:[{id:'p1',nome:'Ricardo Antunes',cor:COR_P[0],dados:o},{id:'p2',nome:'Paula Ribeiro',cor:COR_P[1],dados:novoVazio(o.categorias)}]};
+    }}}catch(e){}
+  if(!DB) DB=dbExemplo();
+  DB.pessoas.forEach(p=>reindex(p.dados));
+  try{const u=JSON.parse(localStorage.getItem(KEY_UI)||'null');if(u)ui={...ui,...u,exp:{...ui.exp,...(u.exp||{})},ac:{...ui.ac,...(u.ac||{})}}}catch(e){}
+  usar(DB.ativa);
+  const a=anosTodos();if(!a.includes(ui.ano))ui.ano=a.includes(HOJE.getFullYear())?HOJE.getFullYear():a[a.length-1];
 }
 function valido(o){return o&&Array.isArray(o.categorias)&&o.anos&&typeof o.anos==='object'}
 function save(){
-  S.atualizado=new Date().toISOString();S.versao=2;
+  S.atualizado=new Date().toISOString();S.versao=2;DB.versao=3;
   reindex();
-  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Não foi possível gravar no navegador. Faça um backup JSON.')}
+  try{localStorage.setItem(KEY,JSON.stringify(DB))}catch(e){toast('Não foi possível gravar no navegador. Faça um backup JSON.')}
   saveUI(); savedInfo();
 }
 function saveUI(){try{localStorage.setItem(KEY_UI,JSON.stringify(ui))}catch(e){}}
@@ -258,13 +297,154 @@ function chartLinhas(series){ // [{nome,cor,vals:[12|null]}]
   <div class="legend">${series.map(s=>`<span><i class="sw" style="background:${s.cor}"></i>${esc(s.nome)}</span>`).join('')}</div>`;
 }
 
+function chartPares(sa,sb,destaque){ // barras lado a lado por mês para duas pessoas
+  const W=760,H=280,L=58,R=10,T=18,B=28,cw=(W-L-R)/12,mx=nice(Math.max(1,...sa.vals,...sb.vals));
+  const sy=v=>T+(H-T-B)*(1-v/mx);
+  let g='';
+  if(destaque!==null) g+=`<rect x="${L+destaque*cw+2}" y="${T-6}" width="${cw-4}" height="${H-T-B+6}" fill="var(--soft)"/>`;
+  for(let i=0;i<=4;i++){const v=mx*i/4,yy=sy(v);g+=`<line class="gl" x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}"/><text x="${L-8}" y="${yy+4}" text-anchor="end">${fmtK(v)}</text>`}
+  ALL.forEach(m=>{
+    const w=cw*.33,x0=L+m*cw+cw*.15;
+    [[sa,0],[sb,1]].forEach(([s,k])=>{const v=s.vals[m];if(v>0){const y1=sy(v);g+=`<rect x="${x0+k*(w+2)}" y="${y1}" width="${w}" height="${Math.max(sy(0)-y1,.5)}" rx="1.5" fill="${s.cor}"><title>${esc(s.nome)} · ${MESES_L[m]}: ${eur.format(v)}</title></rect>`}});
+    g+=`<text x="${L+m*cw+cw/2}" y="${H-8}" text-anchor="middle">${MESES[m]}</text>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Despesas mensais de ${esc(sa.nome)} e ${esc(sb.nome)}">${g}</svg>
+  <div class="legend">${[sa,sb].map(s=>`<span><i class="sw" style="background:${s.cor}"></i>${esc(s.nome)}</span>`).join('')}</div>`;
+}
+
+/* ---------- acerto entre pessoas ---------- */
+const pNome=p=>p.nome.split(' ')[0];
+const quem=p=>`<span class="who"><i class="dot" style="background:${p.cor}"></i>${esc(p.nome)}</span>`;
+function acertoDe(ta,tb,A,B){ // quem gastou menos paga ao outro metade da diferença
+  const dif=r2(ta-tb),metade=r2(Math.abs(dif)/2);
+  if(Math.abs(dif)<0.005) return {dif:0,metade:0,dev:null,cre:null,curto:'—',txt:'Contas certas'};
+  const dev=dif>0?B:A,cre=dif>0?A:B;
+  return {dif,metade,dev,cre,curto:`${pNome(dev)} → ${pNome(cre)}`,txt:`${dev.nome} deve a ${cre.nome}`};
+}
+function dadosAcerto(){
+  const ac=ui.ac,ids=DB.pessoas.map(p=>p.id);
+  if(!ids.includes(ac.a)) ac.a=ids[0];
+  if(!ids.includes(ac.b)||ac.b===ac.a) ac.b=ids.find(i=>i!==ac.a);
+  const A=pessoa(ac.a),B=pessoa(ac.b),y=ui.ano;
+  const nomes=[],seen=new Set();
+  [...A.dados.categorias,...B.dados.categorias].forEach(c=>{const k=normNome(c.nome);if(!seen.has(k)){seen.add(k);nomes.push({k,nome:c.nome,cor:c.cor})}});
+  const incl=new Set(nomes.map(n=>n.k).filter(k=>!ac.excl.includes(k)));
+  const mA=ALL.map(m=>totalMesNomes(A.dados,y,m,incl)),mB=ALL.map(m=>totalMesNomes(B.dados,y,m,incl));
+  const meses=ac.periodo==='ano'?ALL:[+ac.mes];
+  const TA=r2(sum(meses.map(m=>mA[m]))),TB=r2(sum(meses.map(m=>mB[m])));
+  const catTot=(D,k)=>r2(D.categorias.filter(c=>normNome(c.nome)===k).reduce((s,c)=>s+totalCat(y,c.id,meses,D),0));
+  const cats=nomes.map(n=>({...n,a:catTot(A.dados,n.k),b:catTot(B.dados,n.k),inc:incl.has(n.k)}));
+  let acc=0;
+  const mensal=ALL.map(m=>{const d=r2(mA[m]-mB[m]);acc=r2(acc+d);return{m,a:mA[m],b:mB[m],d,ac:acertoDe(mA[m],mB[m],A,B),saldo:acertoDe(acc,0,A,B)}});
+  // saldo acumulado: acertoDe(acc,0) dá metade do acumulado com o sentido certo
+  const periodo=ac.periodo==='ano'?`Ano ${y}`:`${MESES_L[+ac.mes]} ${y}`;
+  return {A,B,y,nomes,incl,mA,mB,meses,TA,TB,cats,mensal,res:acertoDe(TA,TB,A,B),periodo};
+}
+function vAcerto(){
+  if(DB.pessoas.length<2) return `<section class="panel"><h2>Acerto entre pessoas</h2><p class="sub">É preciso ter duas pessoas. Adicione outra pessoa abaixo.</p></section>${gestaoPessoas()}`;
+  const ac=ui.ac,X=dadosAcerto(),{A,B,res}=X;
+  const optP=(id,v)=>`<select id="${id}">${DB.pessoas.map(p=>`<option value="${p.id}" ${p.id===v?'selected':''}>${esc(p.nome)}</option>`).join('')}</select>`;
+  const tot=r2(X.TA+X.TB);
+  const kpi=(l,v,d)=>`<div class="kpi"><div class="lbl">${l}</div><div class="v">${v}</div><div class="d">${d}</div></div>`;
+  const nExcl=X.nomes.length-X.incl.size;
+  return `
+  <section class="panel">
+    <div class="row">
+      ${DB.pessoas.length>2?`<label class="field"><span class="lbl">Pessoa A</span>${optP('acA',X.A.id)}</label><label class="field"><span class="lbl">Pessoa B</span>${optP('acB',X.B.id)}</label>`:''}
+      <label class="field"><span class="lbl">Período</span><select id="acPer"><option value="ano" ${ac.periodo==='ano'?'selected':''}>Ano completo (${X.y})</option><option value="mes" ${ac.periodo==='mes'?'selected':''}>Um mês</option></select></label>
+      ${ac.periodo==='mes'?`<label class="field"><span class="lbl">Mês</span><select id="acMes">${MESES_L.map((n,i)=>`<option value="${i}" ${i===+ac.mes?'selected':''}>${n}</option>`).join('')}</select></label>`:''}
+      <label class="field"><span class="lbl">Formato</span><select id="acFmt"><option value="xlsx" ${ac.formato==='xlsx'?'selected':''}>Excel (.xlsx)</option><option value="csv" ${ac.formato==='csv'?'selected':''}>CSV (Excel PT)</option></select></label>
+      <button class="pri" data-act="exportar-acerto">Exportar acerto</button>
+    </div>
+    <details style="margin-top:14px" ${nExcl?'open':''}>
+      <summary>Categorias incluídas no acerto (${X.incl.size} de ${X.nomes.length})</summary>
+      <p class="note">Desmarque as despesas pessoais que não devem ser divididas. As categorias são comparadas pelo nome.</p>
+      <div class="chips">${X.nomes.map(n=>`<label><input type="checkbox" data-ac-cat="${esc(n.k)}" ${X.incl.has(n.k)?'checked':''}><i class="sw" style="background:${n.cor};margin:0"></i>${esc(n.nome)}</label>`).join('')}</div>
+    </details>
+  </section>
+  <div class="two">
+    <div class="settle">
+      <div class="lbl">Acerto · ${X.periodo}</div>
+      ${res.dev?`<div class="line">${quem(res.dev)} deve a ${quem(res.cre)}</div><div class="big">${eur.format(res.metade)}</div>
+      <div class="note">${esc(pNome(res.cre))} gastou mais ${eur.format(Math.abs(res.dif))}. Metade dessa diferença é paga por ${esc(pNome(res.dev))}, e assim cada um suporta ${eur.format(tot/2)}, metade do total de ${eur.format(tot)}.</div>`
+      :`<div class="line">Contas certas</div><div class="big">${eur.format(0)}</div><div class="note">Os dois gastaram o mesmo neste período.</div>`}
+    </div>
+    <div class="kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      ${kpi(esc(A.nome),eur.format(X.TA),tot?p1.format(X.TA/tot*100)+'% do total':'—')}
+      ${kpi(esc(B.nome),eur.format(X.TB),tot?p1.format(X.TB/tot*100)+'% do total':'—')}
+      ${kpi('Diferença',eur.format(Math.abs(res.dif)),res.dev?`${esc(pNome(res.cre))} gastou mais`:'Sem diferença')}
+      ${kpi('Total conjunto',eur.format(tot),`${eur.format(tot/2)} para cada um`)}
+    </div>
+  </div>
+  <section class="panel"><h2>Despesa mensal de ${esc(pNome(A))} e ${esc(pNome(B))} em ${X.y}</h2><p class="sub">Só as categorias incluídas no acerto.${ac.periodo==='mes'?' O mês escolhido está assinalado.':''}</p>
+    ${chartPares({nome:A.nome,cor:A.cor,vals:X.mA},{nome:B.nome,cor:B.cor,vals:X.mB},ac.periodo==='mes'?+ac.mes:null)}</section>
+  <div class="two">
+    <section class="panel"><h2>Mês a mês</h2><p class="sub">O acerto do mês é metade da diferença desse mês. O saldo acumulado mostra quanto está em dívida desde janeiro.</p>
+      <div class="scroll"><table><thead><tr><th>Mês</th><th class="n">${esc(pNome(A))}</th><th class="n">${esc(pNome(B))}</th><th class="n">Diferença</th><th>Acerto do mês</th><th class="n">Valor</th><th>Saldo acumulado</th><th class="n">Valor</th></tr></thead><tbody>
+      ${X.mensal.map(r=>`<tr${ac.periodo==='mes'&&r.m===+ac.mes?' style="background:var(--soft)"':''}><td>${MESES_L[r.m]}</td><td class="n">${r.a?n2.format(r.a):'—'}</td><td class="n">${r.b?n2.format(r.b):'—'}</td><td class="n">${r.a||r.b?n2.format(Math.abs(r.d)):'—'}</td>
+        <td>${r.ac.curto}</td><td class="n">${r.ac.metade?n2.format(r.ac.metade):'—'}</td><td>${r.saldo.curto}</td><td class="n">${r.saldo.metade?n2.format(r.saldo.metade):'—'}</td></tr>`).join('')}
+      </tbody><tfoot><tr><td>Ano</td><td class="n">${n2.format(sum(X.mA))}</td><td class="n">${n2.format(sum(X.mB))}</td><td class="n">${n2.format(Math.abs(r2(sum(X.mA)-sum(X.mB))))}</td><td colspan="2"></td><td>${X.mensal[11].saldo.curto}</td><td class="n">${n2.format(X.mensal[11].saldo.metade)}</td></tr></tfoot></table></div></section>
+    <section class="panel"><h2>Por categoria · ${X.periodo}</h2><p class="sub">Diferença positiva quando ${esc(pNome(A))} gastou mais.</p>
+      <div class="scroll"><table><thead><tr><th>Categoria</th><th class="n">${esc(pNome(A))}</th><th class="n">${esc(pNome(B))}</th><th class="n">${esc(pNome(A))} − ${esc(pNome(B))}</th></tr></thead><tbody>
+      ${X.cats.map(c=>{const d=r2(c.a-c.b);return `<tr${c.inc?'':' style="opacity:.5"'}><td><i class="sw" style="background:${c.cor}"></i>${esc(c.nome)}${c.inc?'':' <span class="note">(excluída)</span>'}</td><td class="n">${n2.format(c.a)}</td><td class="n">${n2.format(c.b)}</td><td class="n">${d>0?'+':d<0?'−':''}${n2.format(Math.abs(d))}</td></tr>`}).join('')}
+      </tbody><tfoot><tr><td>Incluídas no acerto</td><td class="n">${n2.format(X.TA)}</td><td class="n">${n2.format(X.TB)}</td><td class="n">${res.dif>0?'+':res.dif<0?'−':''}${n2.format(Math.abs(res.dif))}</td></tr></tfoot></table></div></section>
+  </div>
+  ${gestaoPessoas()}`;
+}
+function gestaoPessoas(){
+  return `<section class="panel"><details>
+    <summary>Pessoas</summary>
+    <p class="sub" style="margin-top:10px">Cada pessoa tem os seus próprios lançamentos, tabela e backup. Uma pessoa nova começa com as mesmas categorias de ${esc(pessoaAtiva().nome)}, sem valores.</p>
+    <div class="cats">${DB.pessoas.map(p=>`<div class="catrow">
+      <input type="color" value="${p.cor}" data-p-cor="${p.id}" aria-label="Cor de ${esc(p.nome)}">
+      <input type="text" value="${esc(p.nome)}" data-p-nome="${p.id}" aria-label="Nome da pessoa">
+      ${DB.pessoas.length>1?`<button class="small" data-act="del-pessoa" data-id="${p.id}" data-arm>Remover</button>`:''}</div>`).join('')}</div>
+    <form id="fPessoa" class="row" style="margin-top:12px">
+      <input id="novaPessoa" placeholder="Nome da nova pessoa" style="flex:1;min-width:180px">
+      <button type="submit">Adicionar pessoa</button>
+    </form>
+  </details></section>`;
+}
+function exportarAcerto(){
+  const X=dadosAcerto(),{A,B,res}=X,a=pNome(A),b=pNome(B);
+  const titulo=`Acerto de despesas ${A.nome} / ${B.nome} — ${X.periodo}`;
+  const resumo=[['Período',X.periodo],[`Total ${A.nome}`,X.TA],[`Total ${B.nome}`,X.TB],['Diferença',Math.abs(res.dif)],['Total conjunto',r2(X.TA+X.TB)],['Metade para cada um',r2((X.TA+X.TB)/2)],
+    ['Acerto',res.txt],['Valor a pagar',res.metade],['Categorias incluídas',X.nomes.filter(n=>X.incl.has(n.k)).map(n=>n.nome).join(', ')]];
+  const mH=['Mês',a,b,'Diferença','Acerto do mês','Valor','Saldo acumulado','Valor acumulado'];
+  const mR=X.mensal.map(r=>[MESES_L[r.m],r.a,r.b,Math.abs(r.d),r.ac.curto,r.ac.metade,r.saldo.curto,r.saldo.metade]);
+  const cH=['Categoria',a,b,`${a} − ${b}`,'Incluída'];
+  const cR=X.cats.map(c=>[c.nome,c.a,c.b,r2(c.a-c.b),c.inc?'Sim':'Não']);
+  const fich=`acerto_${slug(a)}_${slug(b)}_${X.y}${ui.ac.periodo==='mes'?'_'+String(+ui.ac.mes+1).padStart(2,'0'):''}`;
+  let fmt=ui.ac.formato;
+  if(fmt==='xlsx'&&!window.XLSX){fmt='csv';toast('Excel indisponível sem ligação à internet. Exportado em CSV.')}
+  if(fmt==='xlsx'){
+    const wb=XLSX.utils.book_new();
+    const add=(nome,aoa,eurCols,start)=>{const ws=XLSX.utils.aoa_to_sheet(aoa);aoa.forEach((r,ri)=>{if(ri<start)return;r.forEach((v,ci)=>{if(typeof v==='number'&&eurCols.includes(ci)){const ref=XLSX.utils.encode_cell({r:ri,c:ci});ws[ref].z='#,##0.00 "€"'}})});
+      ws['!cols']=aoa[start-1].map((h,i)=>({wch:i===0?26:16}));XLSX.utils.book_append_sheet(wb,ws,nome)};
+    add('Resumo',[[titulo],[],['Item','Valor'],...resumo],[1],3);
+    add('Mensal',[[titulo+' — mês a mês'],[],mH,...mR],[1,2,3,5,7],3);
+    add('Categorias',[[titulo+' — por categoria'],[],cH,...cR],[1,2,3],3);
+    XLSX.writeFile(wb,fich+'.xlsx');
+  }else{
+    const q=s=>/[;"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+    const cel=v=>v===null||v===undefined?'':typeof v==='number'?String(v).replace('.',','):q(String(v));
+    const L=[q(titulo),'',...resumo.map(r=>r.map(cel).join(';')),'','Mês a mês',mH.map(q).join(';'),...mR.map(r=>r.map(cel).join(';')),'','Por categoria',cH.map(q).join(';'),...cR.map(r=>r.map(cel).join(';'))];
+    download(new Blob(['﻿'+L.join('\r\n')],{type:'text/csv;charset=utf-8'}),fich+'.csv');
+  }
+  toast('Exportado: '+fich+'.'+fmt);
+}
+
 /* ---------- vistas ---------- */
 function render(){
   const sel=$('#anoSel');
-  sel.innerHTML=anos().map(a=>`<option ${a===ui.ano?'selected':''}>${a}</option>`).join('');
+  sel.innerHTML=anosTodos().map(a=>`<option ${a===ui.ano?'selected':''}>${a}</option>`).join('');
+  const pa=pessoaAtiva(),ac=ui.tab==='acerto';
+  $('#people').innerHTML=DB.pessoas.map(p=>`<button data-act="pessoa" data-id="${p.id}" aria-pressed="${!ac&&p.id===pa.id}"><i class="dot" style="background:${p.cor}"></i>${esc(p.nome)}</button>`).join('');
+  $('#people').style.opacity=ac?.55:1;
   document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===ui.tab));
-  const banner=S.exemplo?`<div class="banner"><span><b>Dados de exemplo.</b> Os valores apresentados são fictícios, para mostrar o funcionamento.</span><button data-act="limpar-exemplo" data-arm>Limpar e começar com os meus dados</button></div>`:'';
-  const v={tabela:vTabela,analise:vAnalise,comparar:vComparar,exportar:vExportar}[ui.tab]();
+  const exs=DB.pessoas.filter(p=>p.dados.exemplo);
+  const banner=exs.length?`<div class="banner"><span><b>Dados de exemplo</b> em ${exs.map(p=>esc(p.nome)).join(' e ')}. Os valores são fictícios, para mostrar o funcionamento. Para usar o seu backup, vá a “Exportar e backup”.</span>${!ac&&S.exemplo?`<button data-act="limpar-exemplo" data-arm>Limpar dados de ${esc(pa.nome)}</button>`:''}</div>`:'';
+  const v={tabela:vTabela,analise:vAnalise,comparar:vComparar,acerto:vAcerto,exportar:vExportar}[ui.tab]();
   $('#main').innerHTML=banner+v;
   savedInfo(); saveUI();
 }
@@ -282,7 +462,7 @@ function vTabela(){
     <td class="n" id="rt-${c.id}">${n2.format(tc)}</td><td class="n" id="ra-${c.id}">${n2.format(reg.length?tc/reg.length:0)}</td></tr>`}).join('');
   return `
   <section class="panel" id="pAdd">
-    <h2>${ed?'Editar lançamento':'Registar lançamento'}</h2>
+    <h2>${ed?'Editar lançamento':'Registar lançamento'} · ${quem(pessoaAtiva())}</h2>
     <p class="sub">Cada lançamento soma ao mês e à categoria da sua data. Ao repetir uma descrição já usada, a categoria é sugerida.</p>
     <form id="fAdd" class="row">
       <label class="field"><span class="lbl">Data</span><input type="date" id="addData" value="${fData}" required></label>
@@ -306,7 +486,7 @@ function vTabela(){
     <div id="lancList">${listaLanc()}</div>
   </section>
   <section class="panel">
-    <h2>Tabela ${y}</h2>
+    <h2>Tabela ${y} · ${esc(pessoaAtiva().nome)}</h2>
     <p class="sub">Valores em euros, já com os lançamentos incluídos. As células com marca azul à esquerda têm lançamentos; o cursor sobre a célula mostra quantos. Pode escrever um valor maior para acrescentar despesas sem descrição. Enter passa para a categoria seguinte. A média mensal considera só os meses com registo (${reg.length}).</p>
     <div class="scroll"><table class="grid">
       <thead><tr><th class="name">Categoria</th>${MESES.map(m=>`<th class="n">${m}</th>`).join('')}<th class="n">Total</th><th class="n">Média/mês</th></tr></thead>
@@ -390,7 +570,7 @@ function vAnalise(){
     ${kpi('Mês mais caro',MESES_L[mMax],`${eur.format(t[mMax])} · mais barato: ${MESES_L[mMin]} (${eur.format(t[mMin])})`)}
     ${kpi('Último mês: '+MESES_L[ult],eur.format(t[ult]),ant>0?`vs mês anterior: <span class="${dUlt.cls}">${dUlt.txt} (${dUlt.ptxt})</span>`:'Sem mês anterior')}
   </div>
-  <section class="panel"><h2>Despesa mensal por categoria</h2><p class="sub">Passe o cursor sobre as barras para ver o valor de cada categoria.</p>${chartBarras(y)}</section>
+  <section class="panel"><h2>Despesa mensal por categoria · ${esc(pessoaAtiva().nome)}</h2><p class="sub">Passe o cursor sobre as barras para ver o valor de cada categoria.</p>${chartBarras(y)}</section>
   <div class="two">
     <section class="panel"><h2>Mês a mês</h2><p class="sub">Variação face ao mês anterior e desvio face à média mensal (${eur.format(media)}).</p>
       <div class="scroll"><table><thead><tr><th>Mês</th><th class="n">Total (€)</th><th class="n">Δ mês ant.</th><th class="n">Δ %</th><th class="n">vs média</th><th>Maior categoria</th></tr></thead><tbody>${linhas}</tbody></table></div></section>
@@ -437,7 +617,7 @@ function vComparar(){
     ${kpi('Total '+B,eur.format(TB),`média ${eur.format(meses.length?TB/meses.length:0)}/mês`)}
     ${kpi('Diferença',`<span class="${d.cls}">${d.txt}</span>`,`<span class="${d.cls}">${d.ptxt}</span> de ${A} para ${B}`)}
   </div>
-  <section class="panel"><h2>Total mensal: ${A} e ${B}</h2><p class="sub">Meses sem registo não são desenhados.</p>
+  <section class="panel"><h2>Total mensal: ${A} e ${B} · ${esc(pessoaAtiva().nome)}</h2><p class="sub">Meses sem registo não são desenhados.</p>
     ${chartLinhas([{nome:String(A),cor:'var(--b)',vals:tA.map(v=>v>0?v:null)},{nome:String(B),cor:'var(--accent)',vals:tB.map(v=>v>0?v:null)}])}</section>
   <div class="two">
     <section class="panel"><h2>Por categoria</h2><p class="sub">${per}. Vermelho indica aumento de despesa.</p>
@@ -458,6 +638,8 @@ function buildExport(){
   ex.lanc=S.lanc.filter(l=>anoDe(l.data)===ui.ano&&(e.ambito==='anual'||mesDe(l.data)===+e.mes)&&(e.conteudo==='global'||l.cat===e.cat))
     .sort((a,b)=>a.data.localeCompare(b.data))
     .map(l=>[fmtData(l.data),l.desc||'',catNome(l.cat),l.valor]);
+  const p=pessoaAtiva();
+  ex.titulo=p.nome+' — '+ex.titulo; ex.ficheiro=slug(p.nome)+'_'+ex.ficheiro;
   return ex;
 }
 const LANC_H=['Data','Descrição','Categoria','Valor'];
@@ -498,8 +680,8 @@ function vExportar(){
   const opt=(id,val,lista)=>`<select id="${id}">${lista.map(([v,l])=>`<option value="${v}" ${String(v)===String(val)?'selected':''}>${esc(l)}</option>`).join('')}</select>`;
   return `
   <section class="panel">
-    <h2>Exportar tabela</h2>
-    <p class="sub">Escolha o âmbito e o conteúdo. A pré-visualização mostra exatamente o que vai para o ficheiro.</p>
+    <h2>Exportar tabela · ${quem(pessoaAtiva())}</h2>
+    <p class="sub">Exporta os dados da pessoa escolhida no topo. Escolha o âmbito e o conteúdo; a pré-visualização mostra exatamente o que vai para o ficheiro. O acerto entre pessoas exporta-se no separador próprio.</p>
     <div class="row">
       <label class="field"><span class="lbl">Âmbito</span>${opt('exAmb',e.ambito,[['anual',`Anual (${ui.ano})`],['mensal','Mensal']])}</label>
       ${e.ambito==='mensal'?`<label class="field"><span class="lbl">Mês</span>${opt('exMes',e.mes,MESES_L.map((n,i)=>[i,n]))}</label>`:''}
@@ -523,15 +705,22 @@ function vExportar(){
       <h2>Backup JSON</h2>
       <p class="sub">Os dados ficam gravados neste navegador. Guarde um backup regularmente e sempre que mudar de computador.</p>
       <div class="row">
-        <button class="pri" data-act="backup">Guardar backup</button>
+        <button class="pri" data-act="backup">Guardar backup de todos</button>
+        <button data-act="backup-pessoa">Só de ${esc(pNome(pessoaAtiva()))}</button>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <label class="field"><span class="lbl">Carregar backup para</span><select id="bkDest">${DB.pessoas.map(p=>`<option value="${p.id}" ${p.id===DB.ativa?'selected':''}>${esc(p.nome)}</option>`).join('')}</select></label>
         <button data-act="restaurar">Carregar backup…</button>
       </div>
-      <p class="note">Ao carregar um backup, os dados atuais são substituídos pelos do ficheiro.</p>
+      <p class="note">Um backup de uma só pessoa, incluindo os das versões anteriores, substitui apenas os dados da pessoa escolhida. Um backup de todos substitui todas as pessoas.</p>
     </section>
     <section class="panel">
       <h2>Recomeçar</h2>
-      <p class="sub">Apaga todos os anos e valores deste navegador e repõe as categorias base.</p>
-      <button data-act="apagar-tudo" data-arm>Apagar todos os dados</button>
+      <p class="sub">Apaga os anos e valores deste navegador e repõe as categorias base.</p>
+      <div class="row">
+        <button data-act="limpar-exemplo" data-arm>Apagar dados de ${esc(pNome(pessoaAtiva()))}</button>
+        <button data-act="apagar-tudo" data-arm>Apagar dados de todos</button>
+      </div>
     </section>
   </div>`;
 }
@@ -564,10 +753,26 @@ function exportar(){
   }
   toast('Exportado: '+ex.ficheiro+'.'+fmt);
 }
-function backup(){
-  const d=new Date().toISOString().slice(0,10);
-  download(new Blob([JSON.stringify({app:'despesas-mensais',versao:1,exportado:new Date().toISOString(),dados:S},null,2)],{type:'application/json'}),`despesas_backup_${d}.json`);
-  toast('Backup guardado.');
+function backup(soAtiva){
+  const d=new Date().toISOString().slice(0,10),p=pessoaAtiva();
+  const o=soAtiva?{app:'despesas-mensais',versao:2,pessoa:p.nome,exportado:new Date().toISOString(),dados:S}
+                 :{app:'despesas-mensais',versao:3,exportado:new Date().toISOString(),db:DB};
+  const nome=soAtiva?`despesas_backup_${slug(p.nome)}_${d}.json`:`despesas_backup_todos_${d}.json`;
+  download(new Blob([JSON.stringify(o,null,2)],{type:'application/json'}),nome);
+  toast('Backup guardado: '+nome);
+}
+function carregarBackup(txt,destId){
+  const o=JSON.parse(txt);
+  const db=o.db||(o.pessoas?o:null);
+  if(db&&dbValido(db)){
+    DB=db;DB.pessoas.forEach(p=>{p.dados.exemplo=false;reindex(p.dados)});
+    usar(DB.pessoas.some(p=>p.id===DB.ativa)?DB.ativa:DB.pessoas[0].id);
+    return `Backup carregado: ${DB.pessoas.map(p=>p.nome).join(' e ')}.`;
+  }
+  const d=o.dados||o;if(!valido(d))throw 0;
+  d.exemplo=false;d.lanc=d.lanc||[];
+  const p=pessoa(destId)||pessoaAtiva();p.dados=d;reindex(d);usar(p.id);
+  return `Backup carregado para ${p.nome}.`;
 }
 
 /* ---------- eventos ---------- */
@@ -578,11 +783,19 @@ document.addEventListener('click',e=>{ // confirmação em dois cliques
 },true);
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
-  const a=b.dataset.act,lista=anos(),i=lista.indexOf(ui.ano);
+  const a=b.dataset.act,lista=anosTodos(),i=lista.indexOf(ui.ano);
   if(a==='tab'){ui.tab=b.dataset.tab;render()}
+  else if(a==='pessoa'){usar(b.dataset.id);if(ui.tab==='acerto')ui.tab='tabela';saveUI();render()}
   else if(a==='ano-prev'&&i>0){ui.ano=lista[i-1];render()}
   else if(a==='ano-next'&&i<lista.length-1){ui.ano=lista[i+1];render()}
-  else if(a==='limpar-exemplo'||a==='apagar-tudo'){S=novoVazio();ui.ano=HOJE.getFullYear();save();render();toast('Dados apagados. Pode começar a registar.')}
+  else if(a==='limpar-exemplo'){ // usa as categorias de outra pessoa com dados reais, para as comparações coincidirem
+    const p=pessoaAtiva(),ref=DB.pessoas.find(x=>x.id!==p.id&&!x.dados.exemplo);
+    p.dados=novoVazio(ref?ref.dados.categorias:S.categorias);usar(p.id);save();render();
+    toast(ref?`Dados de ${p.nome} apagados. Ficou com as categorias de ${ref.nome}.`:`Dados de ${p.nome} apagados. As categorias foram mantidas.`)}
+  else if(a==='apagar-tudo'){DB=dbVazio();usar('p1');ui.ano=HOJE.getFullYear();save();render();toast('Dados apagados. Pode começar a registar.')}
+  else if(a==='del-pessoa'){DB.pessoas=DB.pessoas.filter(p=>p.id!==b.dataset.id);if(!pessoa(DB.ativa))DB.ativa=DB.pessoas[0].id;usar(DB.ativa);save();render();toast('Pessoa removida.')}
+  else if(a==='exportar-acerto')exportarAcerto();
+  else if(a==='backup-pessoa')backup(true);
   else if(a==='del-cat'){const id=b.dataset.id;S.categorias=S.categorias.filter(c=>c.id!==id);Object.values(S.anos).forEach(o=>delete o[id]);S.lanc=S.lanc.filter(l=>l.cat!==id);save();render()}
   else if(a==='edit-lanc'){editId=b.dataset.id;render();$('#pAdd').scrollIntoView({behavior:'smooth',block:'start'});$('#addVal').focus()}
   else if(a==='cancel-edit'){editId=null;render()}
@@ -590,7 +803,7 @@ document.addEventListener('click',e=>{
   else if(a==='cat-up'){const k=S.categorias.findIndex(c=>c.id===b.dataset.id);if(k>0){[S.categorias[k-1],S.categorias[k]]=[S.categorias[k],S.categorias[k-1]];save();render();document.querySelector('details').open=true}}
   else if(a==='del-ano'){S.anos[ui.ano]={};S.lanc=S.lanc.filter(l=>anoDe(l.data)!==ui.ano);save();render();toast(`Valores de ${ui.ano} apagados.`)}
   else if(a==='exportar')exportar();
-  else if(a==='backup')backup();
+  else if(a==='backup')backup(false);
   else if(a==='restaurar')$('#fileIn').click();
 });
 document.addEventListener('submit',e=>{
@@ -612,6 +825,11 @@ document.addEventListener('submit',e=>{
   }else if(f.id==='fCat'){
     const n=$('#novaCat').value.trim();if(!n)return;
     S.categorias.push({id:uid(),nome:n,cor:PALETA[S.categorias.length%PALETA.length]});save();render();document.querySelector('details').open=true;
+  }else if(f.id==='fPessoa'){
+    const n=$('#novaPessoa').value.trim();if(!n)return;
+    const id='p'+Date.now().toString(36);
+    DB.pessoas.push({id,nome:n,cor:COR_P[DB.pessoas.length%COR_P.length],dados:novoVazio(S.categorias)});
+    save();render();const d=[...document.querySelectorAll('details')].pop();if(d)d.open=true;toast(`${n} adicionada, com as categorias de ${pessoaAtiva().nome}.`);
   }else if(f.id==='fAno'){
     const y=+$('#novoAno').value;if(!(y>=1990&&y<=2100)){toast('Indique um ano entre 1990 e 2100.');return}
     if(S.anos[y]){toast(`O ano ${y} já existe.`)}else{S.anos[y]={};save();toast(`Ano ${y} criado.`)}
@@ -639,12 +857,22 @@ document.addEventListener('change',e=>{
   else if(t.id==='exCat'){ui.exp.cat=t.value;render()}
   else if(t.id==='exFmt'){ui.exp.formato=t.value;render()}
   else if(t.id==='exLanc'){ui.exp.lanc=t.checked;render()}
+  else if(t.id==='acA'){ui.ac.a=t.value;if(ui.ac.b===t.value)ui.ac.b=DB.pessoas.find(p=>p.id!==t.value).id;render()}
+  else if(t.id==='acB'){ui.ac.b=t.value;if(ui.ac.a===t.value)ui.ac.a=DB.pessoas.find(p=>p.id!==t.value).id;render()}
+  else if(t.id==='acPer'){ui.ac.periodo=t.value;
+    if(t.value==='mes'){const X=dadosAcerto();if(!X.mA[ui.ac.mes]&&!X.mB[ui.ac.mes]){const u=ALL.filter(m=>X.mA[m]||X.mB[m]).pop();if(u!==undefined)ui.ac.mes=u}}
+    render()}
+  else if(t.id==='acMes'){ui.ac.mes=+t.value;render()}
+  else if(t.id==='acFmt'){ui.ac.formato=t.value;saveUI()}
+  else if(t.dataset.acCat!==undefined){const k=t.dataset.acCat;ui.ac.excl=t.checked?ui.ac.excl.filter(x=>x!==k):[...new Set([...ui.ac.excl,k])];render()}
+  else if(t.dataset.pNome){const p=pessoa(t.dataset.pNome);if(p&&t.value.trim()){p.nome=t.value.trim();save();render()}}
+  else if(t.dataset.pCor){const p=pessoa(t.dataset.pCor);if(p){p.cor=t.value;save();render()}}
   else if(t.id==='lfMes'){ui.lf.mes=t.value;$('#lancList').innerHTML=listaLanc();saveUI()}
   else if(t.id==='lfCat'){ui.lf.cat=t.value;$('#lancList').innerHTML=listaLanc();saveUI()}
   else if(t.id==='fileIn'&&t.files[0]){
     const r=new FileReader();
-    r.onload=()=>{try{const o=JSON.parse(r.result);const d=o.dados||o;if(!valido(d))throw 0;
-      S=d;S.exemplo=false;S.lanc=S.lanc||[];editId=null;const a=anos();if(!S.anos[ui.ano])ui.ano=a[a.length-1];save();render();toast('Backup carregado.')}
+    const dest=$('#bkDest')?$('#bkDest').value:DB.ativa;
+    r.onload=()=>{try{const msg=carregarBackup(r.result,dest);const a=anosTodos();if(!a.includes(ui.ano))ui.ano=a[a.length-1];save();render();toast(msg)}
       catch(err){toast('Este ficheiro não é um backup válido desta aplicação.')}
       t.value=''};
     r.readAsText(t.files[0]);
